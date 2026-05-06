@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, models, transforms
 from tqdm import tqdm
 
@@ -43,6 +43,7 @@ def create_dataloaders(
     data_dir: Path,
     batch_size: int,
     num_workers: int = 2,
+    max_samples_per_split: int | None = None,
 ) -> dict[str, DataLoader]:
     loaders = {}
     for split in ["train", "val", "test"]:
@@ -54,6 +55,8 @@ def create_dataloaders(
             raise ValueError(
                 f"Expected classes {CLASS_NAMES}, found {dataset.classes} in {data_dir / split}"
             )
+        if max_samples_per_split is not None and len(dataset) > max_samples_per_split:
+            dataset = balanced_subset(dataset, max_samples_per_split)
         loaders[split] = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -63,11 +66,44 @@ def create_dataloaders(
     return loaders
 
 
-def build_model(num_classes: int = 2) -> nn.Module:
-    weights = models.MobileNet_V2_Weights.DEFAULT
-    model = models.mobilenet_v2(weights=weights)
-    for parameter in model.features.parameters():
-        parameter.requires_grad = False
+def balanced_subset(dataset: datasets.ImageFolder, max_samples: int) -> Subset:
+    """Keep a small class-balanced subset for quick local demo training."""
+    targets = np.asarray(dataset.targets)
+    per_class = max(1, max_samples // len(dataset.classes))
+    indices = []
+    rng = np.random.default_rng(42)
+    for class_index in range(len(dataset.classes)):
+        class_indices = np.where(targets == class_index)[0]
+        selected = rng.choice(
+            class_indices,
+            size=min(per_class, len(class_indices)),
+            replace=False,
+        )
+        indices.extend(selected.tolist())
+    rng.shuffle(indices)
+    return Subset(dataset, indices)
+
+
+def get_default_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def build_model(num_classes: int = 2, pretrained: bool = True) -> nn.Module:
+    weights = models.MobileNet_V2_Weights.DEFAULT if pretrained else None
+    loaded_pretrained = pretrained
+    try:
+        model = models.mobilenet_v2(weights=weights)
+    except Exception as exc:
+        print(f"Could not load pretrained weights, using random initialization: {exc}")
+        model = models.mobilenet_v2(weights=None)
+        loaded_pretrained = False
+    if loaded_pretrained:
+        for parameter in model.features.parameters():
+            parameter.requires_grad = False
     in_features = model.classifier[1].in_features
     model.classifier[1] = nn.Linear(in_features, num_classes)
     return model
@@ -143,7 +179,10 @@ def save_checkpoint(model: nn.Module, path: Path, metrics: dict) -> None:
 
 def load_checkpoint(path: Path, device: torch.device) -> nn.Module:
     checkpoint = torch.load(path, map_location=device)
-    model = build_model(num_classes=len(checkpoint.get("class_names", CLASS_NAMES)))
+    model = build_model(
+        num_classes=len(checkpoint.get("class_names", CLASS_NAMES)),
+        pretrained=False,
+    )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
@@ -162,4 +201,3 @@ def predict_image(model: nn.Module, image_path: Path, device: torch.device) -> d
         "positive_probability": float(probabilities[1]),
         "negative_probability": float(probabilities[0]),
     }
-
