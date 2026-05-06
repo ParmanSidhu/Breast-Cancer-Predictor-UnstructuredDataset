@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import tempfile
+import sys
 from pathlib import Path
 
 import streamlit as st
 import torch
 from PIL import Image
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from bc_predictor.config import ARTIFACT_DIR
 from bc_predictor.image_model import load_checkpoint, predict_image
@@ -35,4 +41,3 @@ elif uploaded is not None:
     st.metric("Prediction", result["predicted_class"].title())
     st.metric("IDC positive probability", f"{result['positive_probability']:.2%}")
     st.caption("For academic demonstration only. Not for medical diagnosis.")
-
