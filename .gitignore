@@ -1,0 +1,14 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.pycache/
+.ipynb_checkpoints/
+data/raw/
+data/processed/
+artifacts/
+models/
+*.pt
+*.pth
+*.onnx
